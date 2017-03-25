@@ -1,3 +1,9 @@
+
+/*
+    Code by Marius Van Nieuwenhuyse 
+    Modification interdite sans authorisation
+*/
+
 var Discord = require("discord.js");
 var fs = require('fs');
 var ytdl = require('ytdl-core');
