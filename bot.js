@@ -1,4 +1,3 @@
-
 /*
     Code by Marius Van Nieuwenhuyse 
     Modification interdite sans authorisation
@@ -11,6 +10,7 @@ var https = require('https');
 
 var musicStream = null;
 var dispatcher = null;
+var globalVolume = 0.2;
 
 var text_channel = "290148144841490444";
 var voice_channel = "274430776026726400";
@@ -18,21 +18,46 @@ var voice_channel = "274430776026726400";
 var bot = new Discord.Client();
 const token = "Mjk1MjAxNDEzMDExODY1NjAx.C7gPUg.r4h1VRFXAoxFyl15ZlE7BCbzXRo";
 
+var queue = [];
+var now = null;
+
 
 bot.on('ready', function () {
     console.log("Logged in as %s - %s\n", bot.user.username, bot.user.id);
     var channel = bot.channels.get(voice_channel).join().then(function (connection) {
-        console.log("vocal joined");
+        console.log(bot.channels.get(voice_channel).name + " channel joined");
         musicStream = connection;
     });
 });
+
+function findCommand(comm) {
+    for (var i = 0; i < commands.length; i++) {
+        if (commands[i].command == comm) {
+            return commands[i];
+        }
+    }
+    return null;
+}
+
+function next() {
+    now = null;
+    var next = queue.shift();
+    if(next === null || next === undefined){
+        return;
+    }
+    var play = findCommand('play');
+    if (play === null) {
+        return;
+    }
+    play.execute(null, [next]);
+}
 
 var commands = [{
         command: "ping",
         argNumber: 0,
         description: "send a message to test the bot",
         execute: function (message, args) {
-            message.channel.sendMessage('pong');
+            bot.channels.get(text_channel).sendMessage('pong');
         },
         usage: "!ping"
     },
@@ -41,8 +66,9 @@ var commands = [{
         argNumber: 0,
         description: "bot join the vocal channel",
         execute: function (message, args) {
-            var channel = bot.channels.get(voice_channel).join().then(function (connection) {
-                console.log("vocal joined");
+            var channel = bot.channels.get(voice_channel);
+            channel.join().then(function (connection) {
+                console.log(bot.channels.get(voice_channel).name + " channel joined");
                 musicStream = connection;
             });
         },
@@ -74,31 +100,30 @@ var commands = [{
                         res.on('end', function () {
                             var vid_name = JSON.parse(str);
                             vid_name = vid_name.items[0].snippet.title;
-                            message.channel.sendMessage("Now playing: " + vid_name);
+                            bot.channels.get(text_channel).sendMessage("Now playing: " + vid_name);
                             console.log("Now playing: " + vid_name)
+                            now = {vid_name: vid_name, vid_id: vid_id};
                         })
                     }
                     https.request(options, callback).end();
-                    //var vid_name = JSON.parse(xmlHttp.responseText);
-                    //vid_name = vid_name.items.snippet.title;
 
                     if (dispatcher !== null) {
-                        dispatcher.end();
+                        dispatcher.end('anorthe music playing');
                     }
 
-                    //message.channel.sendMessage("Playing " + vid_name);
-
                     var stream = ytdl(args[0], {
-                        filter: 'audioonly'
+                        filter: 'audioonly',
+                        quality: 250
                     });
                     dispatcher = musicStream.playStream(stream, {
-                        volume: 0.1
+                        volume: globalVolume
                     });
+                    dispatcher.on('end', function(reason){next();});
                 } else {
-                    message.channel.sendMessage("I'm not on a vocal channel");
+                    bot.channels.get(text_channel).sendMessage("I'm not on a vocal channel");
                 }
             } else {
-                message.channel.sendMessage(args[0] + " is not a YouTube URL.");
+                bot.channels.get(text_channel).sendMessage(args[0] + " is not a YouTube URL.");
             }
         },
         usage: "!play <YouTube Link>"
@@ -121,9 +146,8 @@ var commands = [{
         execute: function (message, args) {
             if (dispatcher !== null) {
                 var vol = parseFloat(args[0]);
-                console.log(vol);
                 dispatcher.setVolume(vol);
-                console.log(dispatcher.volume);
+                globalVolume = vol;
             }
         },
         usage: "!volume <volume [defaut: 0.1]>"
@@ -151,6 +175,102 @@ var commands = [{
         usage: "!resume"
     },
     {
+        command: "queue",
+        argNumber: 2,
+        description: "moderate the playlist",
+        execute: function (message, args) {
+            var play = findCommand("play");
+            if (args[0] === "add") {
+                var regex = /^(https?\:\/\/)?((www|m)\.youtube\.com|youtu\.?be)\/.+$/g;
+                if (regex.test(args[1])) {
+                    if (dispatcher === null) {
+                        //no playing music
+                        play.execute(message, [args[1]]);
+                    } else {
+                        queue.push(args[1]);
+
+                        var vid_id = args[1].split('v=')[1];
+                        var apos = vid_id.indexOf('&');
+                        if (apos != -1) {
+                            vid_id = vid_id.substring(0, apos);
+                        }
+                        var options = {
+                            host: "www.googleapis.com",
+                            path: "/youtube/v3/videos?id=" + vid_id + "&part=snippet&key=AIzaSyDm71ZB6xmrzkt5ERLYQPoK2-CFecbx3iM"
+                        }
+                        var callback = function (res) {
+                            var str = "";
+                            res.on('data', function (chunk) {
+                                str += chunk;
+                            });
+                            res.on('end', function () {
+                                var vid_name = JSON.parse(str);
+                                vid_name = vid_name.items[0].snippet.title;
+                                bot.channels.get(text_channel).sendMessage("Added to playlist: " + vid_name);
+                                console.log("Added to playlist: " + vid_name);
+                            });
+                        }
+                        https.request(options, callback).end();
+                    }
+                }
+            } else if (args[0] === "next") {
+                var regex = /^(https?\:\/\/)?((www|m)\.youtube\.com|youtu\.?be)\/.+$/g;
+                if (regex.test(args[1])) {
+                    if (dispatcher === null) {
+                        play.execute(message, [args[1]]);
+                    } else {
+                        queue.unshift(args[1]);
+
+                        var vid_id = args[1].split('v=')[1];
+                        var apos = vid_id.indexOf('&');
+                        if (apos != -1) {
+                            vid_id = vid_id.substring(0, apos);
+                        }
+                        var options = {
+                            host: "www.googleapis.com",
+                            path: "/youtube/v3/videos?id=" + vid_id + "&part=snippet&key=AIzaSyDm71ZB6xmrzkt5ERLYQPoK2-CFecbx3iM"
+                        }
+                        var callback = function (res) {
+                            var str = "";
+                            res.on('data', function (chunk) {
+                                str += chunk;
+                            });
+                            res.on('end', function () {
+                                var vid_name = JSON.parse(str);
+                                vid_name = vid_name.items[0].snippet.title;
+                                bot.channels.get(text_channel).sendMessage("Added next to playlist: " + vid_name);
+                                console.log("Added next to playlist: " + vid_name);
+                            });
+                        }
+                        https.request(options, callback).end();
+                    }
+                }
+            }
+        },
+        usage: "!queue <add|next> [YouTube link]\nNote: next is to set the music that\n   will be played just after the music who\n   is now playing."
+    },
+    {
+        command: "clearqueue",
+        argNumber: 0,
+        description: "clear the playlist",
+        execute: function(message, args){
+            queue = [];
+        },
+        usage: "!clearqueue"
+    },
+    {
+        command: "now",
+        argNumber: 0,
+        description: "show the title of the music",
+        execute: function(message, args){
+            if(now !== null){
+                bot.channels.get(text_channel).sendMessage("Playing now: " + now.vid_name);
+            }else{
+                bot.channels.get(text_channel).sendMessage("No music playing ...");
+            }
+        }
+    },
+    {
         command: "help",
         argNumber: 0,
         description: "list of the commands",
@@ -163,7 +283,7 @@ var commands = [{
                 result += "Usage: " + comm.usage + "\n";
             }, this);
             result += "```";
-            message.channel.sendMessage(result);
+            bot.channels.get(text_channel).sendMessage(result);
         },
         usage: "!help"
     }
@@ -186,7 +306,7 @@ bot.on('message', message => {
         }
     }, this);
     if (message.content.substring(0, 1) === "!" & !found) {
-        message.channel.sendMessage("Unkown command, type !help to have a list of the commands");
+        bot.channels.get(text_channel).sendMessage("Unkown command, type !help to have a list of the commands");
     }
 
 });
