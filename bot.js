@@ -16,7 +16,7 @@ var text_channel = "290148144841490444";
 var voice_channel = "274430776026726400";
 
 var bot = new Discord.Client();
-const token = "Mjk1MjAxNDEzMDExODY1NjAx.C7gPUg.r4h1VRFXAoxFyl15ZlE7BCbzXRo";
+const token = "YOUR TOKEN";
 
 var queue = [];
 var now = null;
